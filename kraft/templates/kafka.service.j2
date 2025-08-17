@@ -1,0 +1,15 @@
+[Unit]
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=kafka
+LimitNOFILE=200000
+EnvironmentFile=/etc/default/kafka
+SyslogIdentifier=kafka
+ExecStart=/usr/local/kafka/bin/kafka-server-start.sh /usr/local/kafka/config/server.properties
+ExecStop=/usr/local/kafka/bin/kafka-server-stop.sh
+TimeoutSec=10
+
+[Install]
+WantedBy=multi-user.target
