@@ -1,0 +1,217 @@
+---
+- name: Installing Kraft
+  hosts: accpaywall
+  gather_facts: no
+  become: true
+  pre_tasks:
+    - name: Install Python 3 if not already installed
+      raw: test -e /usr/bin/python3 || (apt -qqy update && apt install -y python3)
+      register: python_install_result
+      changed_when: python_install_result.stdout != ""
+  handlers:
+    - name: handler1
+      command: systemctl daemon-reload
+    - name: handler2
+      service:
+       name: kafka
+       state: restarted
+
+  tasks:
+    - name: Gathering facts
+      setup:
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install Java JDK
+      apt:
+        name: openjdk-17-jdk-headless
+        state: present
+
+    - name: Set JAVA_HOME environment variable
+      lineinfile:
+        path: /etc/environment
+        line: JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+        state: present
+
+    - name: Extracting hostname
+      command: hostname
+      register: hostname
+
+    - name: Include vars
+      include_vars: ../vars/kraft.yaml
+
+    - name: Create Kafka user
+      user:
+        name: kafka
+        comment: "Kafka User"
+        state: present
+        createhome: yes
+
+
+    - name: Create directory for kafka logs
+      file:
+        path: '{{ kafka_log_dir }}'
+        state: directory
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0755
+
+    - name: Create config Directory
+      ansible.builtin.file:
+        path: '{{ kafka_dir }}/config'
+        state: directory
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0755
+
+    - name: Create directory for kafka config
+      file:
+        path: '{{ kafka_dir }}/bin'
+        state: directory
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0755
+
+    - name: Check if the Kafka exists
+      stat:
+        path: '{{ kafka_dir }}/kafka_{{ scala_version }}-{{ kafka_version }}'
+      register: folder_stat
+
+    - name: Download Kraft tar file
+      get_url:
+        url: '{{ kafka_base_url }}{{ kafka_version }}/kafka_{{ scala_version }}-{{ kafka_version }}.tgz'
+        dest: '{{ kafka_dir }}/kafka_{{ scala_version }}-{{ kafka_version }}.tgz'
+      when: not folder_stat.stat.exists
+
+    - name: unzip the kraft
+      unarchive:
+        src: '{{ kafka_dir }}/kafka_{{ scala_version }}-{{ kafka_version }}.tgz'
+        dest: '{{ kafka_dir }}'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        copy: no
+      when: not folder_stat.stat.exists
+
+    - name: Ensure the folder has the correct permissions
+      file:
+        path: '{{ kafka_dir }}/kafka_{{ scala_version }}-{{ kafka_version }}'
+        state: directory
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: '0755'
+
+    - name: Delete the binary tar file
+      file:
+        path: '{{ kafka_dir }}/kafka_{{ scala_version }}-{{ kafka_version }}.tgz'
+        state: absent
+      when: not folder_stat.stat.exists
+
+    - name: Create directory for kafka logs
+      file:
+        path: '{{ kafka_log_dir }}'
+        state: directory
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0755
+
+    - name: extract broker id
+      broker_id:
+        hostname: '{{ ansible_hostname }}'
+      register: broker_id
+
+    - name: Debug example broker_id
+      debug:
+        var: broker_id.broker_id
+
+    - name: Template configuration file to server.properties
+      template:
+        src:  ../templates/server.properties.j2
+        dest: '{{ kafka_dir }}/config/server.properties'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0644
+
+    - name: configuration file to log4j.properties
+      template:
+        src: ../templates/log4j.properties.j2
+        dest: '{{ kafka_dir }}/config/log4j.properties'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0644
+
+    - name: scripts for server bin folder
+      template:
+        src: ../templates/kafka-server-start.sh.j2
+        dest: '{{ kafka_dir }}/bin/kafka-server-start.sh'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0744
+
+    - name: scripts for run-class bin folder
+      template:
+        src: ../templates/kafka-run-class.sh.j2
+        dest: '{{ kafka_dir }}/bin/kafka-run-class.sh'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0744
+
+    - name: script for topics.sh bin folder
+      template:
+        src: ../templates/kafka-topics.sh.j2
+        dest: '{{ kafka_dir }}/bin/kafka-topic.sh'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0744
+
+    - name: Template script for /etc/default/kafka
+      template:
+        src: ../templates/kafka.j2
+        dest: '/etc/default/kafka'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0744
+        
+    - name: Make entry in etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ ansible_default_ipv4.address }} {{ hostname.stdout }}"
+        state: present
+
+    - name: Check if storage is formatted
+      command: "'{{ kafka_dir }}/kafka_{{ scala_version }}-{{ kafka_version }}'/bin/kafka-storage.sh info -c {{ kafka_dir }}/config/server.properties"
+      register: storage_info_output
+      ignore_errors: yes
+
+    - name: Debug storage info
+      debug:
+        var: storage_info_output
+      when:
+        - storage_info_output is defined
+
+    - name: Perform storage format using the generated UUID
+      command: "'{{ kafka_dir }}/kafka_{{ scala_version }}-{{ kafka_version }}'/bin/kafka-storage.sh format -t {{ KAFKA_CLUSTER_ID }} -c {{ kafka_dir }}/config/server.properties"
+      when:
+        - storage_info_output is defined
+        - "'Found metadata' not in storage_info_output"
+
+    - name: Template kafka systemd service
+      template:
+        src: ../templates/kafka.service.j2
+        dest: '{{ kraft_service_path }}'
+        group: '{{ kafka_group }}'
+        owner: '{{ kafka_user }}'
+        mode: 0644
+      notify:
+        - handler1
+
+    - name: Enable kafka systemd service
+      command: systemctl enable kafka
+      notify:
+        - handler1
+        - handler2
+
+    - name: daemon-reload
+      systemd:
+        daemon_reload: yes
