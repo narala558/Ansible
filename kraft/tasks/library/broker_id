@@ -1,0 +1,47 @@
+#!/usr/bin/python
+import re
+from ansible.module_utils.basic import AnsibleModule
+
+
+def run_module():
+    module_args = dict(
+        hostname=dict(type='str', required=True),
+    )
+
+    module = AnsibleModule(
+        argument_spec=module_args,
+        supports_check_mode=True
+    )
+    
+    result = dict(
+        changed=False,
+        broker_id='',
+        failed=False
+    )
+    if module.check_mode:
+        module.exit_json(**result)
+    print( module.params['hostname'])
+    if module.params['hostname'] == '' or re.match('^ip-[0-9]+',  module.params['hostname']):
+        module.fail_json(msg='no hostname found or in the form of ip-[0-9]+, set proper hostname!!!', **result)
+        result['failed'] = True
+    else:
+        value = extract(module.params['hostname'])
+        result['broker_id'] = value
+        
+        
+    module.exit_json(**result)
+
+def extract(hostname):
+    num=''
+    for i in range(len(hostname)):
+        if hostname[i].isdigit():
+            num+=hostname[i]
+            if i+1 < len(hostname) and not hostname[i+1].isdigit():
+                break
+    return num
+
+def main():
+    run_module()
+
+if __name__ == '__main__':
+    main()
