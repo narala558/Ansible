@@ -8,4 +8,4 @@ kafka_group: kafka
 KAFKA_HEAP_OPTS: -Xmx4G -Xms4G
 kafka_log_dir: /data/kafka
 kraft_service_path: /usr/lib/systemd/system/kafka.service
-controller_quorum: "1@kraft-kafka1.prod-acc-paywall.olacabs.net:9093,2@kraft-kafka2.prod-acc-paywall.olacabs.net:9093,3@kraft-kafka3.prod-acc-paywall.olacabs.net:9093,4@kraft-kafka4.prod-acc-paywall.olacabs.net:9093,5@kraft-kafka5.prod-acc-paywall.olacabs.net:9093"
+controller_quorum: "1@hostname:9093,2@hostname"
